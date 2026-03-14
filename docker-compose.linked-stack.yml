@@ -1,0 +1,181 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: campus-medical-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      TZ: Asia/Shanghai
+    command:
+      - --default-time-zone=+08:00
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - campus-medical-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongo:
+    image: mongo:latest
+    container_name: campus-medical-mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    volumes:
+      - mongo_data:/data/db
+      - ./docker/mongo/init.js:/docker-entrypoint-initdb.d/init.js
+    networks:
+      - campus-medical-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend-spring:
+    build:
+      context: ./backend-spring
+      dockerfile: Dockerfile
+    container_name: campus-medical-backend-spring
+    restart: unless-stopped
+    working_dir: /workspace
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SERVER_PORT: 8080
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MONGO_HOST: mongo
+      MONGO_PORT: 27017
+      MONGO_DATABASE: ${MONGO_DATABASE}
+      MONGO_APP_USER: ${MONGO_APP_USER}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD}
+      BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS}
+      JWT_SECRET_KEY: ${SECRET_KEY}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Shanghai}
+      DOCUMENT_STORAGE_PATH: /app/storage/docs
+      SETTINGS_ENCRYPTION_KEY: ${SETTINGS_ENCRYPTION_KEY}
+    ports:
+      - "${BACKEND_SPRING_PORT:-8080}:8080"
+    volumes:
+      - ./backend-spring:/workspace
+      - ./backend/storage/docs:/app/storage/docs
+      - spring_maven_cache:/root/.m2
+    networks:
+      - campus-medical-network
+    depends_on:
+      mysql:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health/ready >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    command: mvn spring-boot:run -Dspring-boot.run.profiles=docker
+
+  agents:
+    build:
+      context: ./agents
+      dockerfile: Dockerfile
+    container_name: campus-medical-agents
+    restart: unless-stopped
+    working_dir: /app
+    environment:
+      SECRET_KEY: ${SECRET_KEY}
+      SETTINGS_ENCRYPTION_KEY: ${SETTINGS_ENCRYPTION_KEY}
+      BACKEND_API_BASE_URL: http://backend-spring:8080/api/v1
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      MODEL_NAME: ${MODEL_NAME:-deepseek-chat}
+      MODEL_TEMPERATURE: ${MODEL_TEMPERATURE:-0}
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MONGO_HOST: mongo
+      MONGO_PORT: 27017
+      MONGO_DATABASE: ${MONGO_DATABASE}
+      MONGO_APP_USER: ${MONGO_APP_USER}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Shanghai}
+      TZ: ${APP_TIMEZONE:-Asia/Shanghai}
+    ports:
+      - "${AGENTS_PORT:-8001}:8001"
+    volumes:
+      - ./agents/langgraph_app:/app
+    networks:
+      - campus-medical-network
+    depends_on:
+      mysql:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      backend-spring:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=3)\" >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    command: uvicorn api.server:app --host 0.0.0.0 --port 8001 --reload
+
+  frontend-spring:
+    build:
+      context: ./frontend-spring
+      dockerfile: Dockerfile
+    container_name: campus-medical-frontend-spring
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: /api/v1
+      VITE_API_PROXY_TARGET: http://backend-spring:8080
+      VITE_AGENT_API_BASE_URL: /agent-api/api/v1
+      VITE_AGENT_PROXY_TARGET: http://agents:8001
+      VITE_WS_BASE_URL: /ws/alerts
+      VITE_WS_PROXY_TARGET: http://backend-spring:8080
+    ports:
+      - "${FRONTEND_SPRING_PORT:-3100}:3000"
+    volumes:
+      - ./frontend-spring:/app
+      - /app/node_modules
+    networks:
+      - campus-medical-network
+    depends_on:
+      backend-spring:
+        condition: service_healthy
+      agents:
+        condition: service_healthy
+    command: npm run dev -- --host 0.0.0.0
+
+volumes:
+  mysql_data:
+    driver: local
+  mongo_data:
+    driver: local
+  spring_maven_cache:
+    driver: local
+
+networks:
+  campus-medical-network:
+    driver: bridge

@@ -1,0 +1,50 @@
+spring:
+  application:
+    name: campus-medical-backend-spring
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    serialization:
+      write-dates-as-timestamps: false
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:campus_medical}?useUnicode=true&characterEncoding=utf8&serverTimezone=${MYSQL_SERVER_TIMEZONE:UTC}&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USER:medical_user}
+    password: ${MYSQL_PASSWORD:medical_password}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQL8Dialect
+        format_sql: true
+  data:
+    mongodb:
+      uri: mongodb://${MONGO_APP_USER:medical_app}:${MONGO_APP_PASSWORD:medical_app_password}@${MONGO_HOST:localhost}:${MONGO_PORT:27017}/${MONGO_DATABASE:campus_medical}?authSource=${MONGO_DATABASE:campus_medical}
+  flyway:
+    enabled: ${SPRING_FLYWAY_ENABLED:false}
+    baseline-on-migrate: true
+
+server:
+  port: ${SERVER_PORT:8080}
+
+app:
+  timezone: ${APP_TIMEZONE:Asia/Shanghai}
+  project-name: Campus Medical Management System
+  api-version: /api/v1
+  environment: ${ENVIRONMENT:development}
+  security:
+    jwt-secret: ${JWT_SECRET_KEY:replace-this-secret-in-docker}
+    access-token-expire-minutes: ${ACCESS_TOKEN_EXPIRE_MINUTES:30}
+  cors:
+    allowed-origins: ${BACKEND_CORS_ORIGINS:http://localhost:3000,http://127.0.0.1:3000,http://localhost:3100,http://127.0.0.1:3100,http://frontend:3000,http://frontend-spring:3000}
+  storage:
+    document-path: ${DOCUMENT_STORAGE_PATH:/app/storage/docs}
+  settings:
+    encryption-key: ${SETTINGS_ENCRYPTION_KEY:}
+
+logging:
+  level:
+    com.campusmedical: INFO
+    org.springframework.web: INFO
+    org.hibernate.SQL: INFO
